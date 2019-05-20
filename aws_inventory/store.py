@@ -11,8 +11,9 @@ import uuid
 
 import botocore
 
-import config
-import version
+from . import config
+from . import version
+#from . import json_to_csv
 
 
 LOGGER = logging.getLogger(__name__)
@@ -80,7 +81,14 @@ class ResultStore(object):
         :return: serialized response store in JSON format
         """
         LOGGER.debug('Building the response store.')
-        return json.dumps(self._response_store, cls=ResponseEncoder)
+        return json.dumps({ 
+            'run_date': self.run_date,
+            'commandline': self.commandline,
+            'version': self.version,
+            'botocore_version': botocore.__version__,
+            'profile' : self.profile, 
+            'responses' : self._response_store 
+            }, cls=ResponseEncoder)
 
     def dump_response_store(self, fp):
         """Pickle the response store.
@@ -88,7 +96,8 @@ class ResultStore(object):
         :param file fp: file to write to
         """
         LOGGER.debug('Writing the response store to file "%s".', fp.name)
-        pickle.dump(self._response_store, fp)
+        fp.write(self.get_response_store())
+        #pickle.dump(self._response_store, fp)
 
     def dump_exception_store(self, fp):
         """Pickle the exception store.
@@ -98,10 +107,15 @@ class ResultStore(object):
         LOGGER.debug('Writing the exception store to file "%s".', fp.name)
         pickle.dump(self._exception_store, fp)
 
-    def generate_data_file(self, fp):
+
+
+
+
+    def generate_data_file(self, fp, cp):
         """Generate the data file for consumption by the data GUI.
 
         :param file fp: file to write to
+        :param file cp: csv conversion file to write to
         """
         # format of data file for jsTree
         #[
@@ -113,20 +127,97 @@ class ResultStore(object):
         #    ]
         #  }
         #]
+
+
+
+
+        def to_string(s):
+         try:
+          return str(s)
+         except:
+           #Change the encoding type if needed
+          return s.encode('utf-8')
+
+
+        def reduce_item(key, value):
+         global reduced_item
+        
+              #Reduction Condition 1
+         if type(value) is list:
+            i=0 
+            for sub_item in value:
+                reduce_item(key+'_'+to_string(i), sub_item)
+                i=i+1
+
+           #Reduction Condition 2
+         elif type(value) is dict:
+            sub_keys = value.keys()
+            for sub_key in sub_keys:
+               reduce_item(key+'_'+to_string(sub_key), value[sub_key])
+
+             #Base Condition
+         else:
+              reduced_item[to_string(key)] = to_string(value)
+
+
+        def json_to_csv(mynode,jsonobject,csvfile):
+           if 1 != 1:
+            print ("\nUsage: python json_to_csv.py <node> <json_in_file_path> <csv_out_file_path>\n")
+           else:
+                #Reading arguments
+               node = mynode
+            #   json_file_path = jsonfile
+               csv_file_path = csvfile
+
+           #    fp = open(json_file_path, 'r')
+           #    json_value = fp.read()
+               raw_data = jsonobject
+   #            raw_data = json.loads(jsonobject)
+   #            fp.close()
+
+               try:
+
+                   data_to_be_processed = raw_data[node]
+               except:
+                    data_to_be_processed = raw_data
+
+               processed_data = []
+               header = []
+               for item in data_to_be_processed:
+                    reduced_item = {}
+                    reduce_item(node, item)
+
+                    header += reduced_item.keys()
+
+                    processed_data.append(reduced_item)
+
+               header = list(set(header))
+               header.sort()
+
+               with open(csv_file_path, 'w+') as f:
+                    writer = csv.DictWriter(f, header, quoting=csv.QUOTE_ALL)
+                    writer.writeheader()
+                    for row in processed_data:
+                       writer.writerow(row)
+
+               print ("Just completed writing csv file with %d columns" % len(header))
+
+
+
         def build_children(obj):
             children = []
             if isinstance(obj, dict):
-                for key, val in obj.items():
+                for key, val in list(obj.items()):
                     child = build_children(val)
                     if isinstance(child, (dict, list, tuple)) and child:
                         children.append({'text': key, 'children': child})
                     else:
                         # leaf node
                         try:
-                            children.append({'text': u'{} = {}'.format(key, val)})
+                            children.append({'text': '{} = {}'.format(key, val)})
                         except UnicodeDecodeError:
                             # key or value is probably binary. For example, CloudTrail API ListPublicKeys
-                            children.append({'text': u'{} = {!r}'.format(key, val)})
+                            children.append({'text': '{} = {!r}'.format(key, val)})
             elif isinstance(obj, (list, tuple)):
                 for i, val in enumerate(obj):
                     child = build_children(val)
@@ -185,3 +276,4 @@ class ResultStore(object):
                    'responses': data}
         LOGGER.debug('Writing the GUI data model to file "%s".', fp.name)
         json.dump(out_obj, fp, cls=ResponseEncoder)
+        json_to_csv('Object', out_obj, cp.name)
